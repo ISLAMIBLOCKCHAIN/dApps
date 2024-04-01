@@ -15,7 +15,7 @@ interface iGoldContract {
     function sell(uint256 _iGoldAmount) external returns(uint256);
     function calculateUSDTReceivedForIGold(uint256 _iGoldAmount) external returns (uint256);
     function calculateIGoldReceivedForUSDT(uint256 _usdtAmount) external  returns (uint256);
-    function addUSDT(uint256 _amount) external;
+    function depositeUSDT(uint256 _amount) external;
 }
 
 interface IBuyAndBurn{
@@ -40,7 +40,7 @@ interface IPMMContract {
         );
 }
 
-contract iQrad_V2 is Ownable {
+contract iQrad_V1 is Ownable {
 
     IPMMContract public pmmContract = IPMMContract(0x14afbB9E6Ab4Ab761f067fA131e46760125301Fc);
     AggregatorV3Interface public goldPriceFeed = AggregatorV3Interface(0x0C466540B2ee1a31b441671eac0ca886e051E410);
@@ -49,13 +49,13 @@ contract iQrad_V2 is Ownable {
 
     IBuyAndBurn public BAB = IBuyAndBurn(0xd73501d9111FF2DE47acBD52D2eAeaaA9e02b4Dd);
     iGoldContract public iGoldc =
-        iGoldContract(0xf2B1114C644cBb3fF63Bf1dD284c8Cd716e95BE9);// 0xaa3281f63157BbeC4Bf34F54480A6226dF80B133);
+        iGoldContract(0x9970CeD626BD512d0C6eF3ac5cc4634f1b417916);
 
     address public deadWallet = 0x000000000000000000000000000000000000dEaD;
 
-    address public islamiToken = 0x2E9d30761DB97706C536A112B9466433032b28e3;// 0x942714c1da04Cc66362aad2132A36e896491d353;
-    address public iGoldToken = 0xf2B1114C644cBb3fF63Bf1dD284c8Cd716e95BE9;// 0xaa3281f63157BbeC4Bf34F54480A6226dF80B133;
-    address public usdtToken = 0xDA07165D4f7c84EEEfa7a4Ff439e039B7925d3dF;// 0xC7185282aafDD110E549f2A06167CB81f3F3E1d0;
+    address public islamiToken = 0x9c891326Fd8b1a713974f73bb604677E1E63396D;
+    address public iGoldToken = 0x9970CeD626BD512d0C6eF3ac5cc4634f1b417916;
+    address public usdtToken = 0xc2132D05D31c914a87C6611C10748AEb04B58e8F;
 
     address private defaultHandler = 0x1be6cF82aC405cC46D35895262Fa83f582D42884;
 
@@ -258,8 +258,8 @@ contract iQrad_V2 is Ownable {
             require(IERC20(usdtToken).transferFrom(msg.sender, address(this), investorFee()), "USDT fee failed");
             uint256 fee1 = investorFee() / 3;
             uint256 fee2 = investorFee() - fee1 ;
-            iGoldc.addUSDT(fee1);
-            require(IERC20(usdtToken).transfer(defaultHandler, fee2), "Handler fee");
+            iGoldc.depositeUSDT(fee1);
+            burnedISLAMI += BAB.buyAndBurn(usdtToken, fee2);
             hasInvestorFile[msg.sender] = true;
         }
 
@@ -340,19 +340,19 @@ contract iQrad_V2 is Ownable {
 
         // Calculate the minimum additional duration to extend the deposit to at least 6 months from now
         uint256 remainingDuration = investor.duration > block.timestamp ? investor.duration - block.timestamp : 0;
-        uint256 sixMonths = isTesting ? 6 * 300 : 6 * oneMonth; // Adjust based on whether we're in testing mode
+        uint256 sixMonths = isTesting ? 6 * 300 : 6 * 30 days; // Adjust based on whether we're in testing mode
         require(remainingDuration < sixMonths, "Deposit extension not allowed. More than 6 months remaining.");
 
         // Ensure the new duration is at least 6 months from now if the remaining duration is less
-        if (remainingDuration + (additionalDuration * oneMonth) < sixMonths) {
-            additionalDuration = (sixMonths - remainingDuration) / oneMonth + 1; // Adjust the additionalDuration to meet the 6 months requirement
+        if (remainingDuration + (additionalDuration * 30 days) < sixMonths) {
+            additionalDuration = (sixMonths - remainingDuration) / 30 days + 1; // Adjust the additionalDuration to meet the 6 months requirement
         }
 
         // Extend the duration
         if(isTesting){
             investor.duration += additionalDuration * 300; // Adjust for testing
         } else{
-            investor.duration += additionalDuration * oneMonth; // Adjust for production
+            investor.duration += additionalDuration * 30 days; // Adjust for production
         }
         
         emit AngelInvestorDurationExtended(msg.sender, vaultId, investor.duration);
@@ -449,6 +449,8 @@ contract iQrad_V2 is Ownable {
         // Calculate the maximum loan amount as 65% of the collateral value
         uint256 amount = getUSDTAmountForLoan(collateralAmount);
 
+        // uint256 minLoanAmount = isTesting ? testingMinLoanAmount : getDynamicMaxLoanAmount(tenure);
+
         uint256 minLoanAmount = isTesting ? testingMinLoanAmount : minLoanAmountDefault;
         uint256 maxAmount = getDynamicMaxLoanAmount(tenure);
 
@@ -465,7 +467,7 @@ contract iQrad_V2 is Ownable {
         );
 
         // Select a vault from which to take the loan
-        _selectVaultsForLoan(user, amount, tenure);
+        _selectVaultsForLoan(user, minLoanAmount, tenure);
     
 
         uint8 _tenure;
@@ -551,6 +553,7 @@ contract iQrad_V2 is Ownable {
         }
     }
 
+
     function getUSDTAmountForLoan(uint256 _collateralAmount) public view returns (uint256 loanAmount){
     
         // Calculate the total value of the iGold collateral
@@ -570,7 +573,7 @@ contract iQrad_V2 is Ownable {
 
     function _calculateNormalDuration(LoanTenure tenure) private view returns (uint256) {
         if (tenure == LoanTenure.ONE_MONTH) {
-            return isTesting ? 5 * 60 : oneMonth; // For testing, you might adjust the duration
+            return isTesting ? 5 * 60 : 30 days; // For testing, you might adjust the duration
         } else if (tenure == LoanTenure.THREE_MONTHS) {
             return isTesting ? 15 * 60 : 90 days;
         } else if (tenure == LoanTenure.SIX_MONTHS) {
@@ -685,15 +688,14 @@ contract iQrad_V2 is Ownable {
         closeLoan(_user);
     }
 
-
     function _updateVaults(address _user) private{
         User storage user = users[_user];
         SelectedVault[] storage vaults = selectedVaults[_user];
-        uint256 payemt = user.monthlyPayment;
+        uint256 monthlyPayment = user.monthlyPayment;
         // The payment is divided equally among all the selected vaults
         uint256 vaultCount = vaults.length;
-        uint256 paymentPerVault = payemt / vaultCount;
-        uint256 remainder = payemt % vaultCount; // Remainder that needs to be distributed
+        uint256 paymentPerVault = monthlyPayment / vaultCount;
+        uint256 remainder = monthlyPayment % vaultCount; // Remainder that needs to be distributed
 
         uint256 totalDistributedPayment = 0; // Track the total payment distributed
 
@@ -768,10 +770,6 @@ contract iQrad_V2 is Ownable {
         activeLoans--;
 
         emit LoanClosed(_user);
-    }
-
-    function repayLoan() public hasActiveLoan(msg.sender){
-        _repayLoan(msg.sender);
     }
 
     function _repayLoan(address _user) private {
@@ -896,7 +894,6 @@ contract iQrad_V2 is Ownable {
         return allInvestorVaults;
     }
 
-
     function getDynamicMaxLoanAmount(LoanTenure tenure) public view returns (uint256) {
         uint256 averageDeposit = usdtVault;
         
@@ -978,35 +975,31 @@ contract iQrad_V2 is Ownable {
 
     function getIslamiPrice(uint256 payQuoteAmount)
         public
-        pure
+        view
         returns (uint256 _price)
     {
-        // address trader = address(this);
-        // // Call the querySellQuote function from the PMMContract
-        // (uint256 receiveBaseAmount, , , ) = pmmContract.querySellQuote(
-        //     trader,
-        //     payQuoteAmount
-        // );
-        // _price = receiveBaseAmount;
-        // return _price;
-        _price = 36459672164 * (payQuoteAmount / (1e6));
+        address trader = address(this);
+        // Call the querySellQuote function from the PMMContract
+        (uint256 receiveBaseAmount, , , ) = pmmContract.querySellQuote(
+            trader,
+            payQuoteAmount
+        );
+        _price = receiveBaseAmount;
         return _price;
     }
 
-    function getLatestGoldPriceOunce() public pure returns (int256) {
-        // (, int256 pricePerOunce, , , ) = goldPriceFeed.latestRoundData();
-        // return pricePerOunce;
-        int256 pricePerOunce = 202482000000;
+    function getLatestGoldPriceOunce() public view returns (int256) {
+        (, int256 pricePerOunce, , , ) = goldPriceFeed.latestRoundData();
         return pricePerOunce;
     }
 
-    function getLatestGoldPriceGram() public pure returns (int256) {
+    function getLatestGoldPriceGram() public view returns (int256) {
         int256 pricePerGram = (getLatestGoldPriceOunce() * 1e8) / 3110347680; // Multiplied by 10^8 to handle decimals
 
         return pricePerGram;
     }
 
-    function getIGoldPrice() public pure returns (int256) {
+    function getIGoldPrice() public view returns (int256) {
         int256 _iGoldPrice = (getLatestGoldPriceGram()) / 10;
         return _iGoldPrice;
     }
@@ -1044,7 +1037,6 @@ contract iQrad_V2 is Ownable {
         totalDue = overduePayments * user.monthlyPayment;
         return (overduePayments, totalDue);
     }
-
 
 }
 
